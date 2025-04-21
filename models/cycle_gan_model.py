@@ -41,7 +41,9 @@ class CycleGANModel(BaseModel):
             parser.add_argument('--lambda_A', type=float, default=10.0, help='weight for cycle loss (A -> B -> A)')
             parser.add_argument('--lambda_B', type=float, default=10.0, help='weight for cycle loss (B -> A -> B)')
             parser.add_argument('--lambda_identity', type=float, default=0.5, help='use identity mapping. Setting lambda_identity other than 0 has an effect of scaling the weight of the identity mapping loss. For example, if the weight of the identity loss should be 10 times smaller than the weight of the reconstruction loss, please set lambda_identity = 0.1')
-
+            parser.add_argument('--lambda_cycle', type=float, default=1.0, help='common weight for cycle loss')
+            parser.add_argument('--lambda_gan', type=float, default=1.0, help='weight for adversarial loss in Gs')
+            parser.add_argument('--lambda_translation', type=float, default=0.0, help='use translation loss between historical and modern maps. Same effect as lambda_identity.')
         return parser
 
     def __init__(self, opt):
@@ -52,7 +54,7 @@ class CycleGANModel(BaseModel):
         """
         BaseModel.__init__(self, opt)
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
-        self.loss_names = ['D_A', 'G_A', 'cycle_A', 'idt_A', 'D_B', 'G_B', 'cycle_B', 'idt_B']
+        self.loss_names = ['D_A', 'G_A', 'cycle_A', 'idt_A', 'D_B', 'G_B', 'cycle_B', 'idt_B', 'trans_A', 'trans_B']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         visual_names_A = ['real_A', 'fake_B', 'rec_A']
         visual_names_B = ['real_B', 'fake_A', 'rec_B']
@@ -90,6 +92,7 @@ class CycleGANModel(BaseModel):
             self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)  # define GAN loss.
             self.criterionCycle = torch.nn.L1Loss()
             self.criterionIdt = torch.nn.L1Loss()
+            self.criterionTranslation = torch.nn.L1Loss()
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
             self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizer_D = torch.optim.Adam(itertools.chain(self.netD_A.parameters(), self.netD_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
@@ -151,6 +154,9 @@ class CycleGANModel(BaseModel):
     def backward_G(self):
         """Calculate the loss for generators G_A and G_B"""
         lambda_idt = self.opt.lambda_identity
+        lambda_translation = self.opt.lambda_translation
+        lambda_gan = self.opt.lambda_gan
+        lambda_cycle = self.opt.lambda_cycle
         lambda_A = self.opt.lambda_A
         lambda_B = self.opt.lambda_B
         # Identity loss
@@ -165,16 +171,35 @@ class CycleGANModel(BaseModel):
             self.loss_idt_A = 0
             self.loss_idt_B = 0
 
-        # GAN loss D_A(G_A(A))
-        self.loss_G_A = self.criterionGAN(self.netD_A(self.fake_B), True)
-        # GAN loss D_B(G_B(B))
-        self.loss_G_B = self.criterionGAN(self.netD_B(self.fake_A), True)
-        # Forward cycle loss || G_B(G_A(A)) - A||
-        self.loss_cycle_A = self.criterionCycle(self.rec_A, self.real_A) * lambda_A
-        # Backward cycle loss || G_A(G_B(B)) - B||
-        self.loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B) * lambda_B
+        if lambda_translation > 0:
+            # ||A - G_B(B)||
+            self.loss_trans_A = self.criterionTranslation(self.real_A, self.fake_A) * lambda_A * lambda_translation
+            # ||B - G_A(A)||
+            self.loss_trans_B = self.criterionTranslation(self.real_B, self.fake_B) * lambda_B * lambda_translation
+        else:
+            self.loss_trans_A = 0
+            self.loss_trans_B = 0
+
+        if lambda_gan > 0:
+            # GAN loss D_A(G_A(A))
+            self.loss_G_A = self.criterionGAN(self.netD_A(self.fake_B), True) * lambda_gan
+            # GAN loss D_B(G_B(B))
+            self.loss_G_B = self.criterionGAN(self.netD_B(self.fake_A), True) * lambda_gan
+        else:
+            self.loss_G_A = 0
+            self.loss_G_B = 0
+
+        if lambda_cycle > 0:
+            # Forward cycle loss || G_B(G_A(A)) - A||
+            self.loss_cycle_A = self.criterionCycle(self.rec_A, self.real_A) * lambda_A * lambda_cycle
+            # Backward cycle loss || G_A(G_B(B)) - B||
+            self.loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B) * lambda_B * lambda_cycle
+        else:
+            self.loss_cycle_A = 0
+            self.loss_cycle_B = 0
+
         # combined loss and calculate gradients
-        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B
+        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B + self.loss_trans_A + self.loss_trans_B
         self.loss_G.backward()
 
     def optimize_parameters(self):

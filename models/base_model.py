@@ -83,6 +83,15 @@ class BaseModel(ABC):
         """
         if self.isTrain:
             self.schedulers = [networks.get_scheduler(optimizer, opt) for optimizer in self.optimizers]
+            if opt.continue_train:
+                if opt.epoch == 'latest':
+                    # Get a numerically sorted list of file names
+                    files = [f for f in os.listdir(self.save_dir) if f[0].isdigit()]
+                    files.sort(key=lambda x: int(''.join(filter(str.isdigit, x)) or 0))
+                    opt.epoch = int(files[-1].split('_')[0])
+                    opt.epoch_count = opt.epoch + 1
+                else:
+                    opt.epoch_count = int(opt.epoch) + 1
         if not self.isTrain or opt.continue_train:
             load_suffix = 'iter_%d' % opt.load_iter if opt.load_iter > 0 else opt.epoch
             self.load_networks(load_suffix)

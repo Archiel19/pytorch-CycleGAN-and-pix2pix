@@ -24,8 +24,24 @@ from data import create_dataset
 from models import create_model
 from util.visualizer import Visualizer
 
+# Auto requeue
+import signal
+import os
+import sys
+interrupted = False
+
+def signal_handler(signum, frame):
+    global interrupted
+    interrupted = True
+
+signal.signal(signal.SIGTERM, signal_handler)
+
 if __name__ == '__main__':
     opt = TrainOptions().parse()   # get training options
+    flag_path = os.path.join(opt.checkpoints_dir, opt.name, 'resume_flag.txt')
+    if os.path.exists(flag_path):
+        opt.continue_train = True
+
     dataset = create_dataset(opt)  # create a dataset given opt.dataset_mode and other options
     dataset_size = len(dataset)    # get the number of images in the dataset.
     print('The number of training images = %d' % dataset_size)
@@ -75,3 +91,12 @@ if __name__ == '__main__':
             model.save_networks(epoch)
 
         print('End of epoch %d / %d \t Time Taken: %d sec' % (epoch, opt.n_epochs + opt.n_epochs_decay, time.time() - epoch_start_time))
+
+        if interrupted:
+            with open(flag_path, 'w') as f:
+                f.write(f"Interrupted at epoch {epoch}")
+            sys.exit(99)
+
+    if os.path.exists(flag_path):
+        os.remove(flag_path)
+    sys.exit(0)
