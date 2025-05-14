@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="pytorch_cyclegan_pix2pix",
+    name="cyclegan",
     version="0.1.0",
     description="CycleGAN and pix2pix in PyTorch",
     author="Jun-Yan Zhu",
